@@ -24,16 +24,28 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
+      # Descobre a VPC default da conta (sempre existe uma no Learner Lab).
+      - name: Descobrir VPC default
+        id: vpc
+        run: |
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=isDefault,Values=true" \
+            --query "Vpcs[0].VpcId" \
+            --output text)
+          echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "VPC default encontrada: $VPC_ID"
+
       - name: Deploy do CloudFormation
         run: |
           aws cloudformation deploy \
             --template-file infra.yml \
             --stack-name catalogo-livros-deploy \
+            --parameter-overrides VpcId=${{ steps.vpc.outputs.vpc_id }} \
             --no-fail-on-empty-changeset
 
       - name: Mostrar URL da API
         run: |
           aws cloudformation describe-stacks \
             --stack-name catalogo-livros-deploy \
-            --query "Stacks[0].Outputs[?OutputKey=='APIUrl'].OutputValue" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
             --output text
