@@ -1,0 +1,39 @@
+name: Deploy AWS
+
+# Disparado manualmente pelo botao "Run workflow" na aba Actions
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy CloudFormation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v4
+
+      # Configura credenciais AWS a partir dos secrets do repositorio.
+      # No AWS Academy as credenciais sao TEMPORARIAS: quando expirarem,
+      # atualize os tres secrets em Settings -> Secrets and variables -> Actions.
+      - name: Configurar credenciais AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Deploy do CloudFormation
+        run: |
+          aws cloudformation deploy \
+            --template-file infra.yml \
+            --stack-name catalogo-livros-deploy \
+            --no-fail-on-empty-changeset
+
+      - name: Mostrar URL da API
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name catalogo-livros-deploy \
+            --query "Stacks[0].Outputs[?OutputKey=='APIUrl'].OutputValue" \
+            --output text

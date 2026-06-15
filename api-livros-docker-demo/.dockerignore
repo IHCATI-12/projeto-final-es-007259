@@ -1,0 +1,32 @@
+# Arquivos e pastas que NAO devem entrar na imagem Docker.
+# Mantem a imagem menor e o build mais rapido.
+
+# Ambiente virtual
+venv/
+.venv/
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Cache de testes
+.pytest_cache/
+.coverage
+
+# Configuracoes de IDE e editor
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# CI/CD (nao precisa dentro da imagem)
+.github/
+
+# Documentacao e o proprio Dockerfile
+Dockerfile
+.dockerignore
+README.md

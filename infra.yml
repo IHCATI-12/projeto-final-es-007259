@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# ---------------------------------------------------------------------------
+# Deploy da API de catalogo de livros em EC2 com Docker.
+# A EC2 clona o repositorio publico, builda a imagem localmente e
+# sobe o container expondo a porta 80.
+#
+# Restricoes do AWS Academy Learner Lab consideradas:
+#   - Regiao: us-east-1
+#   - Tipo de instancia: maximo *.large
+#   - AMI: Amazon Linux 2023 (resolvida via SSM)
+#   - IAM: nao cria role; usa o LabInstanceProfile ja existente
+#   - EBS gp3 ate 100GB
+#   - Usa a VPC default da conta (selecionada no dropdown)
+# ---------------------------------------------------------------------------
+
+Description: >
+  EC2 + Docker rodando a API de catalogo de livros. A imagem e construida
+  na propria EC2 a partir do repositorio publico no GitHub.
+
+Parameters:
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: >
+      Selecione a VPC default da conta. Obrigatorio para o Security Group
+      conseguir declarar regras de egress.
+
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: AMI Amazon Linux 2023, resolvida automaticamente pelo SSM.
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+    Description: Tipo da instancia EC2. t3.micro e suficiente para a API.
+
+  RepoUrl:
+    Type: String
+    Default: https://github.com/lucas-bruzzone/sample-api.git
+    Description: URL do repositorio publico contendo o Dockerfile.
+
+  RepoSubdir:
+    Type: String
+    Default: api-livros-docker-demo
+    Description: >
+      Subpasta dentro do repositorio onde esta o Dockerfile.
+      Deixe vazio se o Dockerfile estiver na raiz do repositorio.
+
+  AllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$
+    ConstraintDescription: Informe um CIDR valido, ex 0.0.0.0/0
+    Description: Faixa de IPs autorizada a acessar a API (porta 80).
+
+  VolumeSizeGb:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
+    Description: Tamanho do disco EBS gp3 em GB.
+
+Resources:
+
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Acesso HTTP a API de catalogo de livros (porta 80)
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedCidr
+          Description: HTTP - API de catalogo
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Saida liberada (clone do repo, pull de imagem base)
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sg"
+
+  ApiInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      # Usa o instance profile pre-existente do Academy (habilita SSM para debug).
+      IamInstanceProfile: LabInstanceProfile
+      SecurityGroupIds:
+        - !Ref ApiSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref VolumeSizeGb
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-api"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # Instala Docker e Git
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user || true
+
+          # Clona o repositorio publico
+          cd /home/ec2-user
+          git clone ${RepoUrl} app
+          cd app/${RepoSubdir}
+
+          # Builda a imagem localmente
+          docker build -t catalogo-livros .
+
+          # Sobe o container: porta 80 (EC2) -> porta 8000 (API dentro do container)
+          docker run -d \
+            --restart unless-stopped \
+            -p 80:8000 \
+            --name catalogo-livros \
+            catalogo-livros
+
+  # Elastic IP: mantem a URL estavel mesmo apos stop/start do Learner Lab.
+  ApiEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ApiInstance
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eip"
+
+Outputs:
+
+  ApiUrl:
+    Description: URL da API rodando (acrescente /docs para a documentacao Swagger)
+    Value: !Sub "http://${ApiEip}/docs"
+
+  PublicIp:
+    Description: IP publico estavel (Elastic IP) da instancia
+    Value: !Ref ApiEip
+
+  InstanceId:
+    Description: ID da instancia (use no Session Manager para debug)
+    Value: !Ref ApiInstance
