@@ -1,0 +1,10 @@
+# Pasta do ambiente virtual
+venv/
+.venv/
+
+# Arquivos compilados do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.coverage

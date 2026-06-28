@@ -12,7 +12,7 @@ Para rodar:
 
 Documentacao interativa: http://localhost:8000/docs
 """
-
+import httpx
 from fastapi import FastAPI, HTTPException, status
 
 from models import Livro, LivroCriar, LivroAtualizar
@@ -38,7 +38,39 @@ class ServicoLivros:
     def buscar(self, livro_id: int) -> Livro | None:
         return self._repo.buscar_por_id(livro_id)
 
-    def criar(self, dados: LivroCriar) -> Livro:
+    async def criar(self, dados: LivroCriar) -> Livro:
+        # 1. Regra de negócio: recusar ISBN duplicado
+        # Buscando na lista do repositório se o ISBN já existe
+        for livro_salvo in self._repo.listar():
+            if livro_salvo.isbn == dados.isbn:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="ISBN já tá cadastrado!"
+                )
+        # 2. Dependência externa: Consultar Open Library
+        url_open_library = f"https://openlibrary.org/api/books?bibkeys=ISBN:{dados.isbn}&format=json&jscmd=data"
+
+        async with httpx.AsyncClient() as client:
+            resposta = await client.get(url_open_library)
+            dados_api = resposta.json()
+
+            # Valida se a API achou o livro
+            if not dados_api:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail="Deu ruim! Livro não encontrado na Open Library."
+                )
+
+            chave_isbn = f"ISBN:{dados.isbn}"
+            info_livro = dados_api.get(chave_isbn, {})
+
+            # Completa ou atualiza os dados com o que veio da API externa
+            if "title" in info_livro:
+                dados.titulo = info_livro["title"]
+
+            if "authors" in info_livro and len(info_livro["authors"]) > 0:
+                dados.autor = info_livro["authors"][0]["name"]
+
         return self._repo.adicionar(dados)
 
     def atualizar(self, livro_id: int, dados: LivroAtualizar) -> Livro | None:
@@ -80,8 +112,8 @@ def buscar_livro(livro_id: int):
 
 
 @app.post("/livros", response_model=Livro, status_code=status.HTTP_201_CREATED)
-def criar_livro(dados: LivroCriar):
-    return servico.criar(dados)
+async def criar_livro(dados: LivroCriar):
+    return await servico.criar(dados)
 
 
 @app.put("/livros/{livro_id}", response_model=Livro)
